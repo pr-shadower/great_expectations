@@ -1,0 +1,69 @@
+name: pytest_default_order
+
+# This pipeline is intended to facilitate the full coverage of tests for OSS GX.
+# A "reasonable" set of tests will run on every pull request, and a full set will run with:
+#   1. Manual triggering
+#   2. Every 3 hours
+#   3. When we push a tag with a semver pattern x.y.z (for example 0.0.1) which is the pattern we use for releases.
+
+on:
+  merge_group:
+  pull_request:
+  workflow_dispatch: # allows manual triggering with branch picker
+  push:
+
+concurrency:
+  # Only run one instance of this workflow in PRs, but allow multiple instances in develop.
+  # https://stackoverflow.com/questions/74117321/if-condition-in-concurrency-in-gha
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+
+  unit-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11"] #["3.8", "3.9", "3.10", "3.11"]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache-dependency-path: |
+            reqs/requirements-dev-test.txt
+            setup.py
+
+      - name: Install dependencies
+        run: pip install . -c constraints-dev.txt -r reqs/requirements-dev-test.txt
+
+      - name: Install pytest-ranking
+        run: pip install pytest-ranking
+      
+      - name: Restore pytest-ranking cache
+        id: restore-pytest-ranking-cache
+        if: always()
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.pytest_cache/v/pytest_ranking_data
+          key: pytest-ranking-cache-${{ github.workflow }}-${{ runner.os }}-${{ matrix.python }}
+      
+      - name: Run the unit tests
+        run: pytest -m 'unit' -rEf -n auto --timeout=1.5 --cov=great_expectations --cov-report=xml -v --durations=0 --rank --rank-weight=1-1-1
+      
+
+      - name: Save pytest-ranking cache
+        id: save-pytest-ranking-cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.pytest_cache/v/pytest_ranking_data
+          key: pytest-ranking-cache-${{ github.workflow }}-${{ runner.os }}-${{ matrix.python }}-${{ github.run_id }}
+
+
